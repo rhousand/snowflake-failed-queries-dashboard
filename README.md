@@ -1,0 +1,295 @@
+# Snowflake Failed Queries Dashboard
+
+A web application built with Go that displays failed Snowflake queries from the last 24 hours for all users. The dashboard provides a clean, modern interface to monitor and investigate query failures.
+
+## Architecture
+
+![Architecture Diagram](generated-diagrams/architecture_diagram.png)
+
+The dashboard uses a simple three-tier architecture:
+- **Web Browser**: Interactive UI with auto-refresh every 30 seconds
+- **Go Application**: HTTP server with security middleware and data processing
+- **Snowflake**: Data warehouse providing failed query information from ACCOUNT_USAGE
+
+## Features
+
+- **Auto-Refresh Dashboard**: Automatically updates every 30 seconds with new failed queries
+- **User Filtering**: Filter queries by specific users with dropdown selection
+- **Real-time Statistics**: Track total failed queries and unique users affected
+- **Detailed Information**: See query text, error messages, execution time, user, and timestamps
+- **Smart Polling**: Pauses when browser tab is inactive to save resources
+- **Manual Refresh**: Instant refresh button for on-demand updates
+- **Last Updated Indicator**: Shows how recently data was refreshed
+- **REST API**: JSON endpoint for programmatic access
+- **Nix Support**: Complete Nix flake for development and deployment
+- **Security Hardened**: Includes CSP headers, credential protection, and secure coding practices
+
+## Prerequisites
+
+- Snowflake account with access to `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY`
+- Role with `IMPORTED PRIVILEGES` on SNOWFLAKE database (typically `ACCOUNTADMIN`)
+- Go 1.23+ (or use Nix flake)
+
+## Quick Start
+
+### Using Nix (Recommended)
+
+1. **Enter development environment**:
+   ```bash
+   nix develop
+   ```
+
+2. **Create .env file**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your Snowflake credentials
+   ```
+
+3. **Run the application**:
+   ```bash
+   go run main.go
+   ```
+
+4. **Open browser**:
+   ```
+   http://localhost:8080
+   ```
+
+### Without Nix
+
+1. **Install Go dependencies**:
+   ```bash
+   go mod download
+   ```
+
+2. **Create .env file**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your Snowflake credentials
+   ```
+
+3. **Run the application**:
+   ```bash
+   go run main.go
+   ```
+
+## Configuration
+
+Configure the application using environment variables in a `.env` file:
+
+```env
+SNOWFLAKE_ACCOUNT=your-account.region
+SNOWFLAKE_USER=your-username
+SNOWFLAKE_PASSWORD=your-password
+SNOWFLAKE_DATABASE=SNOWFLAKE
+SNOWFLAKE_SCHEMA=ACCOUNT_USAGE
+SNOWFLAKE_WAREHOUSE=your-warehouse
+SNOWFLAKE_ROLE=ACCOUNTADMIN
+PORT=8080  # Optional, defaults to 8080
+```
+
+See `.env.example` for a complete template.
+
+## API Endpoints
+
+### Web Dashboard
+- `GET /` - HTML dashboard displaying failed queries
+
+### REST API
+- `GET /api/queries` - JSON array of failed queries
+
+Example response:
+```json
+[
+  {
+    "query_id": "01b2c3d4-5678-90ab-cdef-1234567890ab",
+    "query_text": "SELECT * FROM non_existent_table",
+    "user_name": "JOHN_DOE",
+    "error_message": "SQL compilation error: Object 'NON_EXISTENT_TABLE' does not exist",
+    "start_time": "2025-12-11T10:30:00Z",
+    "end_time": "2025-12-11T10:30:01Z",
+    "execution_time_seconds": 0.45
+  }
+]
+```
+
+## Nix Flake Usage
+
+### Development Shell
+
+Enter a development environment with Go and tools:
+```bash
+nix develop
+```
+
+### Build the Application
+
+Build a standalone binary:
+```bash
+nix build
+./result/bin/snowflake-dashboard
+```
+
+### Build Docker Container
+
+Build a Docker/OCI container image:
+```bash
+nix build .#container
+docker load < result
+docker run -p 8080:8080 --env-file .env snowflake-dashboard:latest
+```
+
+### NixOS Container
+
+Deploy as a NixOS container:
+```bash
+# Create password file
+echo "your-password" > /run/secrets/snowflake-password
+
+# Build and run container
+nixos-container create snowflake-dashboard --flake .#container
+nixos-container start snowflake-dashboard
+```
+
+## Building with Nix
+
+The flake provides several outputs:
+
+- `devShells.default` - Development environment with Go toolchain
+- `packages.default` - The compiled application
+- `nixosModules.default` - NixOS module for system integration
+- `nixosConfigurations.container` - Pre-configured container
+
+## Deployment
+
+### Traditional Deployment
+
+1. Build the binary:
+   ```bash
+   go build -o snowflake-dashboard
+   ```
+
+2. Set environment variables and run:
+   ```bash
+   export SNOWFLAKE_ACCOUNT="your-account"
+   export SNOWFLAKE_USER="your-user"
+   export SNOWFLAKE_PASSWORD="your-password"
+   export SNOWFLAKE_WAREHOUSE="your-warehouse"
+   ./snowflake-dashboard
+   ```
+
+### NixOS Module Deployment
+
+Add to your NixOS configuration:
+
+```nix
+{
+  services.snowflake-dashboard = {
+    enable = true;
+    port = 8080;
+    snowflake = {
+      account = "your-account.region";
+      user = "your-username";
+      passwordFile = "/run/secrets/snowflake-password";
+      warehouse = "your-warehouse";
+      database = "SNOWFLAKE";
+      schema = "ACCOUNT_USAGE";
+      role = "ACCOUNTADMIN";
+    };
+  };
+}
+```
+
+## Security Considerations
+
+- **Never commit `.env` file** - It contains sensitive credentials
+- **Use passwordFile in production** - Store passwords in secure secret management
+- **Restrict database access** - Use a role with minimal required privileges
+- **Use HTTPS in production** - Run behind a reverse proxy with TLS
+
+## Snowflake Permissions
+
+The application requires access to `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` view. Ensure your role has:
+
+```sql
+-- Grant usage on SNOWFLAKE database
+GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE your_role;
+
+-- Or use ACCOUNTADMIN role which has access by default
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+If you can't connect to Snowflake:
+- Verify your account identifier format (should be `account.region`)
+- Check that the warehouse is running
+- Ensure network connectivity to Snowflake
+
+### No Queries Displayed
+
+If the dashboard shows no queries:
+- Verify your role has access to `ACCOUNT_USAGE.QUERY_HISTORY`
+- Check if there are actually any failed queries in the last 24 hours
+- Review application logs for any errors
+
+### Nix Build Issues
+
+If the Nix build fails:
+```bash
+# Update the vendorHash in flake.nix
+nix build 2>&1 | grep "got:" | awk '{print $2}'
+# Copy the hash and update vendorHash in flake.nix
+```
+
+## Development
+
+### Project Structure
+
+```
+.
+├── main.go           # Main application code
+├── go.mod            # Go module definition
+├── flake.nix         # Nix flake for dev environment and packaging
+├── container.nix     # Docker/NixOS container configurations
+├── .env.example      # Environment variable template
+├── .gitignore        # Git ignore rules
+└── README.md         # This file
+```
+
+### Running Tests
+
+```bash
+go test ./...
+```
+
+### Code Formatting
+
+```bash
+go fmt ./...
+```
+
+### Linting (in Nix dev shell)
+
+```bash
+golangci-lint run
+```
+
+## License
+
+MIT
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## Support
+
+For issues and questions:
+- Check the Troubleshooting section
+- Review Snowflake documentation for ACCOUNT_USAGE views
+- Open an issue on GitHub

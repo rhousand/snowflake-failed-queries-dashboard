@@ -1,0 +1,44 @@
+# Environment files
+.env
+
+# Go build artifacts
+snowflake-dashboard
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependencies
+vendor/
+
+# Local Go cache (used by Nix dev shell)
+.gopath/
+.gocache/
+
+# Nix
+result
+result-*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# direnv
+.direnv/
+.envrc
