@@ -5,6 +5,7 @@ go 1.23
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/snowflakedb/gosnowflake v1.14.1
+	github.com/youmark/pkcs8 v0.0.0-20240424034433-3c2c7870ae76
 )
 
 require (

@@ -2,6 +2,13 @@
 .env
 .env.tailscale
 
+# Private keys
+*.p8
+*.pem
+*.key
+keys/
+secrets/
+
 # Go build artifacts
 snowflake-dashboard
 *.exe

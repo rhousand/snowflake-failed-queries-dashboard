@@ -18,7 +18,7 @@
 
           src = ./.;
 
-          vendorHash = "sha256-b4XmnP0EJJsSC8f3Q4Gnj8tcsdlCo7cab/baDGRIT/0=";
+          vendorHash = "sha256-i9inf+GdM/qgQ7oydh+12A4CQJdWqYaSX7gEQR0a2Io=";
 
           ldflags = [ "-s" "-w" ];
 
@@ -92,7 +92,7 @@
                 pname = "snowflake-dashboard";
                 version = "0.1.0";
                 src = ./.;
-                vendorHash = "sha256-b4XmnP0EJJsSC8f3Q4Gnj8tcsdlCo7cab/baDGRIT/0=";
+                vendorHash = "sha256-i9inf+GdM/qgQ7oydh+12A4CQJdWqYaSX7gEQR0a2Io=";
                 ldflags = [ "-s" "-w" ];
               };
             in

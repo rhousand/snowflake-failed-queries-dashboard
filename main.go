@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -13,6 +18,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/snowflakedb/gosnowflake"
+	"github.com/youmark/pkcs8"
 	_ "github.com/snowflakedb/gosnowflake"
 )
 
@@ -26,14 +33,32 @@ type FailedQuery struct {
 	ExecutionTime float64   `json:"execution_time_seconds"`
 }
 
+type AuthType string
+
+const (
+	AuthTypePassword AuthType = "password"
+	AuthTypeKeyPair  AuthType = "keypair"
+)
+
 type Config struct {
+	// Common fields
 	Account   string
 	User      string
-	Password  string
 	Database  string
 	Schema    string
 	Warehouse string
 	Role      string
+
+	// Authentication type
+	AuthType AuthType
+
+	// Password auth fields
+	Password string
+
+	// Key-pair auth fields
+	PrivateKeyPath       string
+	PrivateKeyContent    string // Base64-encoded PEM content
+	PrivateKeyPassphrase string
 }
 
 func loadConfig() (*Config, error) {
@@ -41,35 +66,165 @@ func loadConfig() (*Config, error) {
 		log.Println("No .env file found, using environment variables")
 	}
 
+	authType := AuthType(os.Getenv("SNOWFLAKE_AUTH_TYPE"))
+	if authType == "" {
+		authType = AuthTypePassword // Default to password auth
+	}
+
 	config := &Config{
 		Account:   os.Getenv("SNOWFLAKE_ACCOUNT"),
 		User:      os.Getenv("SNOWFLAKE_USER"),
-		Password:  os.Getenv("SNOWFLAKE_PASSWORD"),
 		Database:  os.Getenv("SNOWFLAKE_DATABASE"),
 		Schema:    os.Getenv("SNOWFLAKE_SCHEMA"),
 		Warehouse: os.Getenv("SNOWFLAKE_WAREHOUSE"),
 		Role:      os.Getenv("SNOWFLAKE_ROLE"),
+		AuthType:  authType,
 	}
 
-	if config.Account == "" || config.User == "" || config.Password == "" {
-		return nil, fmt.Errorf("required Snowflake credentials missing")
+	// Validate common fields
+	if config.Account == "" || config.User == "" {
+		return nil, fmt.Errorf("SNOWFLAKE_ACCOUNT and SNOWFLAKE_USER are required")
+	}
+
+	// Validate based on auth type
+	switch authType {
+	case AuthTypePassword:
+		config.Password = os.Getenv("SNOWFLAKE_PASSWORD")
+		if config.Password == "" {
+			return nil, fmt.Errorf("SNOWFLAKE_PASSWORD is required for password authentication")
+		}
+	case AuthTypeKeyPair:
+		config.PrivateKeyPath = os.Getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
+		config.PrivateKeyContent = os.Getenv("SNOWFLAKE_PRIVATE_KEY_CONTENT")
+		config.PrivateKeyPassphrase = os.Getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE")
+
+		if config.PrivateKeyPath == "" && config.PrivateKeyContent == "" {
+			return nil, fmt.Errorf("either SNOWFLAKE_PRIVATE_KEY_PATH or SNOWFLAKE_PRIVATE_KEY_CONTENT is required for key-pair authentication")
+		}
+	default:
+		return nil, fmt.Errorf("invalid SNOWFLAKE_AUTH_TYPE: %s (must be 'password' or 'keypair')", authType)
 	}
 
 	return config, nil
 }
 
+// parsePrivateKey loads and parses the RSA private key from file or base64 content
+func parsePrivateKey(config *Config) (*rsa.PrivateKey, error) {
+	var pemBytes []byte
+	var err error
+
+	// Get PEM bytes from file or env var
+	if config.PrivateKeyPath != "" {
+		pemBytes, err = os.ReadFile(config.PrivateKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read private key file: %w", err)
+		}
+	} else if config.PrivateKeyContent != "" {
+		// Decode base64-encoded key content
+		pemBytes, err = base64.StdEncoding.DecodeString(config.PrivateKeyContent)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode base64 private key: %w", err)
+		}
+	}
+
+	// Decode PEM block
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("failed to parse PEM block containing the private key")
+	}
+
+	// Handle encrypted vs unencrypted keys
+	var privateKeyBytes []byte
+
+	if x509.IsEncryptedPEMBlock(block) {
+		// Legacy PEM encryption (PKCS#1 with DEK-Info)
+		if config.PrivateKeyPassphrase == "" {
+			return nil, errors.New("private key is encrypted but no passphrase provided (set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE)")
+		}
+		privateKeyBytes, err = x509.DecryptPEMBlock(block, []byte(config.PrivateKeyPassphrase))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt PEM block: %w", err)
+		}
+	} else if block.Type == "ENCRYPTED PRIVATE KEY" {
+		// Modern PKCS#8 encryption
+		if config.PrivateKeyPassphrase == "" {
+			return nil, errors.New("private key is encrypted but no passphrase provided (set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE)")
+		}
+		// Use github.com/youmark/pkcs8 for PKCS#8 decryption
+		privateKey, err := pkcs8.ParsePKCS8PrivateKey(block.Bytes, []byte(config.PrivateKeyPassphrase))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse encrypted PKCS8 private key: %w", err)
+		}
+		rsaKey, ok := privateKey.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("private key is not RSA type, got %T", privateKey)
+		}
+		return rsaKey, nil
+	} else {
+		// Unencrypted key
+		privateKeyBytes = block.Bytes
+	}
+
+	// Parse unencrypted PKCS#8 or PKCS#1
+	privateKey, err := x509.ParsePKCS8PrivateKey(privateKeyBytes)
+	if err != nil {
+		// Try PKCS#1 format as fallback
+		return x509.ParsePKCS1PrivateKey(privateKeyBytes)
+	}
+
+	rsaKey, ok := privateKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key is not RSA type, got %T", privateKey)
+	}
+
+	return rsaKey, nil
+}
+
 func getSnowflakeConnection(config *Config) (*sql.DB, error) {
-	// Security Fix #2: URL encode password to prevent it from appearing in logs
-	// and to handle special characters properly
-	dsn := fmt.Sprintf("%s:%s@%s/%s/%s?warehouse=%s&role=%s",
-		url.QueryEscape(config.User),
-		url.QueryEscape(config.Password),
-		config.Account,
-		config.Database,
-		config.Schema,
-		url.QueryEscape(config.Warehouse),
-		url.QueryEscape(config.Role),
-	)
+	var dsn string
+	var err error
+
+	switch config.AuthType {
+	case AuthTypePassword:
+		// Security Fix #2: URL encode password to prevent it from appearing in logs
+		// and to handle special characters properly
+		dsn = fmt.Sprintf("%s:%s@%s/%s/%s?warehouse=%s&role=%s",
+			url.QueryEscape(config.User),
+			url.QueryEscape(config.Password),
+			config.Account,
+			config.Database,
+			config.Schema,
+			url.QueryEscape(config.Warehouse),
+			url.QueryEscape(config.Role),
+		)
+
+	case AuthTypeKeyPair:
+		// Load and parse private key
+		privateKey, err := parsePrivateKey(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load private key: %w", err)
+		}
+
+		// Build config using gosnowflake.Config
+		sfConfig := &gosnowflake.Config{
+			Account:       config.Account,
+			User:          config.User,
+			Authenticator: gosnowflake.AuthTypeJwt,
+			PrivateKey:    privateKey,
+			Database:      config.Database,
+			Schema:        config.Schema,
+			Warehouse:     config.Warehouse,
+			Role:          config.Role,
+		}
+
+		dsn, err = gosnowflake.DSN(sfConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build DSN for key-pair auth: %w", err)
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported auth type: %s", config.AuthType)
+	}
 
 	db, err := sql.Open("snowflake", dsn)
 	if err != nil {
@@ -87,15 +242,23 @@ func getSnowflakeConnection(config *Config) (*sql.DB, error) {
 }
 
 // Security Fix #3: Clear sensitive data from memory
-func clearPassword(config *Config) {
-	// Overwrite password with zeros to minimize time in memory
+func clearSensitiveData(config *Config) {
+	// Clear password
 	if config.Password != "" {
-		// Convert string to byte slice and overwrite
 		passwordBytes := []byte(config.Password)
 		for i := range passwordBytes {
 			passwordBytes[i] = 0
 		}
 		config.Password = ""
+	}
+
+	// Clear passphrase
+	if config.PrivateKeyPassphrase != "" {
+		passphraseBytes := []byte(config.PrivateKeyPassphrase)
+		for i := range passphraseBytes {
+			passphraseBytes[i] = 0
+		}
+		config.PrivateKeyPassphrase = ""
 	}
 }
 
@@ -722,8 +885,8 @@ func main() {
 	}
 	defer db.Close()
 
-	// Security Fix #3: Clear password from memory after successful connection
-	clearPassword(config)
+	// Security Fix #3: Clear sensitive data from memory after successful connection
+	clearSensitiveData(config)
 
 	// Security Fix #4: Go's html/template automatically escapes all interpolated values
 	// to prevent XSS attacks. This includes QueryText, ErrorMessage, UserName, etc.

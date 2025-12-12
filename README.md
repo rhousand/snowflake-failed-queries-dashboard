@@ -75,9 +75,14 @@ The dashboard uses a simple three-tier architecture:
 
 ## Configuration
 
-Configure the application using environment variables in a `.env` file:
+The dashboard supports two authentication methods: **password** and **key-pair**.
+
+### Password Authentication (Default)
+
+Configure using environment variables in a `.env` file:
 
 ```env
+SNOWFLAKE_AUTH_TYPE=password  # Optional, defaults to password
 SNOWFLAKE_ACCOUNT=your-account.region
 SNOWFLAKE_USER=your-username
 SNOWFLAKE_PASSWORD=your-password
@@ -88,7 +93,50 @@ SNOWFLAKE_ROLE=ACCOUNTADMIN
 PORT=8080  # Optional, defaults to 8080
 ```
 
-See `.env.example` for a complete template.
+### Key-Pair Authentication (Recommended for Production)
+
+For enhanced security, use Snowflake key-pair authentication:
+
+```env
+SNOWFLAKE_AUTH_TYPE=keypair
+SNOWFLAKE_ACCOUNT=your-account.region
+SNOWFLAKE_USER=your-username
+
+# Option 1: Path to private key file (recommended)
+SNOWFLAKE_PRIVATE_KEY_PATH=/run/secrets/snowflake_key.p8
+
+# Option 2: Base64-encoded key content (alternative)
+# SNOWFLAKE_PRIVATE_KEY_CONTENT=<base64-encoded-key>
+
+# Optional: Passphrase for encrypted keys
+# SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=your-passphrase
+
+SNOWFLAKE_DATABASE=SNOWFLAKE
+SNOWFLAKE_SCHEMA=ACCOUNT_USAGE
+SNOWFLAKE_WAREHOUSE=your-warehouse
+SNOWFLAKE_ROLE=ACCOUNTADMIN
+```
+
+**Generate Key Pair:**
+
+```bash
+# 1. Generate private key (unencrypted)
+openssl genrsa 2048 | openssl pkcs8 -topk8 -nocrypt -inform PEM -out rsa_key.p8
+
+# 2. Extract public key
+openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+
+# 3. Assign to Snowflake user (remove header/footer/newlines)
+ALTER USER your_username SET RSA_PUBLIC_KEY='MIIBIjANBgkq...';
+```
+
+For encrypted keys with passphrase:
+
+```bash
+openssl genrsa 2048 | openssl pkcs8 -topk8 -v2 des3 -inform PEM -out rsa_key.p8
+```
+
+See `.env.example` for a complete template and [Snowflake documentation](https://docs.snowflake.com/en/user-guide/key-pair-auth) for details.
 
 ## API Endpoints
 
