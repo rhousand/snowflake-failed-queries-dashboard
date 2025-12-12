@@ -1,4 +1,4 @@
-module github.com/rhousand/snowflake-dashboard
+module github.com/rhousand/snowflake-failed-queries-dashboard
 
 go 1.23
 

@@ -24,7 +24,7 @@
 
           meta = with pkgs.lib; {
             description = "Web dashboard for failed Snowflake queries";
-            homepage = "https://github.com/rhousand/snowflake-dashboard";
+            homepage = "https://github.com/rhousand/snowflake-failed-queries-dashboard";
             license = licenses.mit;
             maintainers = [];
           };
