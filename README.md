@@ -177,10 +177,42 @@ The flake provides several outputs:
 
 - `devShells.default` - Development environment with Go toolchain
 - `packages.default` - The compiled application
+- `packages.container` - Docker/OCI container image
+- `packages.tailscale-sidecar` - Tailscale networking container (for Tailscale deployment)
+- `packages.dashboard-for-tailscale` - Dashboard container optimized for Tailscale
 - `nixosModules.default` - NixOS module for system integration
 - `nixosConfigurations.container` - Pre-configured container
 
 ## Deployment
+
+### Tailscale Deployment (Recommended for Secure Access)
+
+Deploy with Tailscale for group-based access control and automatic HTTPS:
+
+```bash
+# 1. Generate Tailscale auth key at https://login.tailscale.com/admin/settings/keys
+# 2. Configure environment
+cp .env.tailscale.example .env
+# Edit .env with your Tailscale auth key and Snowflake credentials
+
+# 3. Build container (if not already built)
+nix build .#container
+docker load < result
+
+# 4. Start services
+docker-compose -f docker-compose.tailscale.yml up -d
+
+# 5. Access via HTTPS
+https://snowflake-dashboard.<your-tailnet>.ts.net
+```
+
+**Features:**
+- **Group-Based Access Control**: Restrict access to specific Tailscale user groups via ACLs
+- **Automatic HTTPS**: Let's Encrypt certificates provisioned automatically by Tailscale
+- **Zero Configuration DNS**: MagicDNS provides automatic hostname
+- **Private Network**: Dashboard accessible only on your Tailscale network
+
+See [docs/TAILSCALE_SETUP.md](docs/TAILSCALE_SETUP.md) for complete setup guide including ACL configuration.
 
 ### Traditional Deployment
 

@@ -1,5 +1,6 @@
 # Environment files
 .env
+.env.tailscale
 
 # Go build artifacts
 snowflake-dashboard

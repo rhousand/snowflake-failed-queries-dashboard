@@ -116,6 +116,20 @@
                 ];
               };
             };
+
+          # Tailscale-enabled containers
+          # Build with: nix build .#tailscale-sidecar or nix build .#dashboard-for-tailscale
+          tailscale-sidecar =
+            let
+              tailscaleConfig = import ./container-tailscale.nix { inherit pkgs nixpkgs; };
+            in
+            tailscaleConfig.tailscaleContainer;
+
+          dashboard-for-tailscale =
+            let
+              tailscaleConfig = import ./container-tailscale.nix { inherit pkgs nixpkgs; };
+            in
+            tailscaleConfig.dashboardContainer;
         };
 
         # NixOS module for running in a container

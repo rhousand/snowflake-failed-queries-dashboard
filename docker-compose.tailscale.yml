@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: snowflake-dashboard-tailscale
+    hostname: snowflake-dashboard
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---advertise-tags=tag:snowflake-dashboard}
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale/serve.json:/config/serve.json:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+    networks:
+      - tailscale-net
+    healthcheck:
+      test: ["CMD", "tailscale", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  dashboard:
+    image: snowflake-dashboard:latest
+    container_name: snowflake-dashboard-app
+    environment:
+      - PORT=8080
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE:-SNOWFLAKE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA:-ACCOUNT_USAGE}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE:-ACCOUNTADMIN}
+    network_mode: "service:tailscale"
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  tailscale-state:
+    driver: local
+
+networks:
+  tailscale-net:
+    driver: bridge
