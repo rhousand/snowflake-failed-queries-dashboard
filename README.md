@@ -139,6 +139,26 @@ docker load < result
 docker run -p 8080:8080 --env-file .env snowflake-dashboard:latest
 ```
 
+**Note for macOS Users**: Building the container on macOS requires a Linux builder because Docker containers run Linux binaries. You need to configure Nix to use a remote Linux builder (either a VM or remote machine).
+
+**Setting up a Linux Builder on macOS**:
+
+The easiest approach is to use a Linux VM as a builder:
+
+1. **Install and configure a Linux VM** (such as UTM, OrbStack, or Multipass)
+2. **Enable SSH access** to the VM
+3. **Configure Nix to use the remote builder** by adding to `~/.config/nix/nix.conf`:
+   ```
+   builders = ssh://username@linux-vm-ip x86_64-linux
+   builders-use-ssh = true
+   ```
+4. **Ensure SSH key authentication** is set up for passwordless access
+
+For detailed setup instructions, see:
+- [Nix Remote Builds Documentation](https://nixos.org/manual/nix/stable/advanced-topics/distributed-builds.html)
+- [NixOS Wiki: Distributed Builds](https://nixos.wiki/wiki/Distributed_build)
+- [Docker Desktop Alternative](https://github.com/abathur/nix-build-on-linux-on-macos) - Automated Linux builder setup for macOS
+
 ### NixOS Container
 
 Deploy as a NixOS container:

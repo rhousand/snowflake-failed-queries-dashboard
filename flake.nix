@@ -18,7 +18,7 @@
 
           src = ./.;
 
-          vendorHash = "sha256-8n7w/0n+eGK5C0TjKhfJTyqr1zzGO3tFxqB8FQqjb48=";
+          vendorHash = "sha256-b4XmnP0EJJsSC8f3Q4Gnj8tcsdlCo7cab/baDGRIT/0=";
 
           ldflags = [ "-s" "-w" ];
 
@@ -79,6 +79,43 @@
         packages = {
           default = snowflake-dashboard;
           snowflake-dashboard = snowflake-dashboard;
+
+          # Docker container (cross-compiled for Linux)
+          container =
+            let
+              # Cross-compile for Linux if we're on macOS
+              linuxPkgs = if pkgs.stdenv.isDarwin
+                then import nixpkgs { system = "x86_64-linux"; }
+                else pkgs;
+
+              linuxDashboard = linuxPkgs.buildGoModule {
+                pname = "snowflake-dashboard";
+                version = "0.1.0";
+                src = ./.;
+                vendorHash = "sha256-b4XmnP0EJJsSC8f3Q4Gnj8tcsdlCo7cab/baDGRIT/0=";
+                ldflags = [ "-s" "-w" ];
+              };
+            in
+            linuxPkgs.dockerTools.buildImage {
+              name = "snowflake-dashboard";
+              tag = "latest";
+
+              copyToRoot = linuxPkgs.buildEnv {
+                name = "image-root";
+                paths = [ linuxDashboard linuxPkgs.cacert ];
+                pathsToLink = [ "/bin" "/etc" ];
+              };
+
+              config = {
+                Cmd = [ "${linuxDashboard}/bin/snowflake-failed-queries-dashboard" ];
+                ExposedPorts = {
+                  "8080/tcp" = {};
+                };
+                Env = [
+                  "SSL_CERT_FILE=${linuxPkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                ];
+              };
+            };
         };
 
         # NixOS module for running in a container
@@ -145,7 +182,7 @@
 
                 serviceConfig = {
                   Type = "simple";
-                  ExecStart = "${snowflake-dashboard}/bin/snowflake-dashboard";
+                  ExecStart = "${snowflake-dashboard}/bin/snowflake-failed-queries-dashboard";
                   Restart = "always";
                   RestartSec = "10s";
 
@@ -176,7 +213,7 @@
 
                 script = ''
                   export SNOWFLAKE_PASSWORD=$(cat $CREDENTIALS_DIRECTORY/password)
-                  exec ${snowflake-dashboard}/bin/snowflake-dashboard
+                  exec ${snowflake-dashboard}/bin/snowflake-failed-queries-dashboard
                 '';
               };
 
