@@ -10,24 +10,26 @@ services:
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
       - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---advertise-tags=tag:snowflake-dashboard}
-      - TS_SERVE_CONFIG=/config/serve.json
     volumes:
       - tailscale-state:/var/lib/tailscale
-      - ./tailscale/serve.json:/config/serve.json:ro
+      - ./tailscale/setup-serve.sh:/setup-serve.sh:ro
     cap_add:
       - NET_ADMIN
       - NET_RAW
     restart: unless-stopped
     networks:
       - tailscale-net
+    command: sh -c "tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock & sleep 5 && tailscale up --authkey=${TS_AUTHKEY} --hostname=snowflake-dashboard ${TS_EXTRA_ARGS:---advertise-tags=tag:snowflake-dashboard} && tailscale serve https / http://127.0.0.1:8080 && tail -f /dev/null"
     healthcheck:
       test: ["CMD", "tailscale", "status"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
 
   dashboard:
     image: snowflake-dashboard:latest
+    platform: linux/amd64
     container_name: snowflake-dashboard-app
     environment:
       - PORT=8080
@@ -48,8 +50,8 @@ services:
       - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
       - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE:-ACCOUNTADMIN}
     # Uncomment to mount private key file for key-pair auth
-    # volumes:
-    #   - ./snowflake_key.p8:/run/secrets/snowflake_key.p8:ro
+    volumes:
+      - ./snowflake_key.p8:/run/secrets/snowflake_key.p8:ro
     network_mode: "service:tailscale"
     depends_on:
       tailscale:

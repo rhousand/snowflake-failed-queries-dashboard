@@ -190,10 +190,20 @@ Build with `nix build .#container`, load with `docker load < result`, run with e
 ### Tailscale (Recommended)
 Uses `docker-compose.tailscale.yml` to deploy:
 - Dashboard container (port 8080 internal only)
-- Tailscale sidecar container (provides networking)
+- Tailscale sidecar container (provides networking and HTTPS)
 - Accessible via `https://snowflake-dashboard.<tailnet>.ts.net`
 - Supports ACL-based group restrictions
-- Automatic Let's Encrypt HTTPS certificates
+- Automatic Let's Encrypt HTTPS certificates via `tailscale serve`
+
+**Important**: The Tailscale container automatically configures HTTPS serving on startup using the command:
+```bash
+tailscale serve https / http://127.0.0.1:8080
+```
+
+This configuration persists in the `tailscale-state` volume. If you need to reconfigure, run:
+```bash
+docker exec snowflake-dashboard-tailscale tailscale serve https / http://127.0.0.1:8080
+```
 
 See `docs/TAILSCALE_SETUP.md` for complete setup instructions including ACL configuration.
 
