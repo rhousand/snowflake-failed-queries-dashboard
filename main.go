@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -61,6 +63,20 @@ type Config struct {
 	PrivateKeyPassphrase string
 }
 
+// getSecretOrEnv reads a value from Docker secrets (/run/secrets/) or falls back to environment variable
+// This provides backward compatibility with environment variables while supporting Docker secrets
+func getSecretOrEnv(secretName, envName string) string {
+	// Try Docker secret first
+	secretPath := filepath.Join("/run/secrets", secretName)
+	if data, err := os.ReadFile(secretPath); err == nil {
+		// Trim whitespace/newlines from secret files
+		return strings.TrimSpace(string(data))
+	}
+
+	// Fall back to environment variable
+	return os.Getenv(envName)
+}
+
 func loadConfig() (*Config, error) {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
@@ -89,14 +105,16 @@ func loadConfig() (*Config, error) {
 	// Validate based on auth type
 	switch authType {
 	case AuthTypePassword:
-		config.Password = os.Getenv("SNOWFLAKE_PASSWORD")
+		// Read password from Docker secret or environment variable
+		config.Password = getSecretOrEnv("snowflake_password", "SNOWFLAKE_PASSWORD")
 		if config.Password == "" {
-			return nil, fmt.Errorf("SNOWFLAKE_PASSWORD is required for password authentication")
+			return nil, fmt.Errorf("SNOWFLAKE_PASSWORD is required for password authentication (provide via /run/secrets/snowflake_password or SNOWFLAKE_PASSWORD env var)")
 		}
 	case AuthTypeKeyPair:
 		config.PrivateKeyPath = os.Getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
 		config.PrivateKeyContent = os.Getenv("SNOWFLAKE_PRIVATE_KEY_CONTENT")
-		config.PrivateKeyPassphrase = os.Getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE")
+		// Read passphrase from Docker secret or environment variable
+		config.PrivateKeyPassphrase = getSecretOrEnv("snowflake_private_key_passphrase", "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE")
 
 		if config.PrivateKeyPath == "" && config.PrivateKeyContent == "" {
 			return nil, fmt.Errorf("either SNOWFLAKE_PRIVATE_KEY_PATH or SNOWFLAKE_PRIVATE_KEY_CONTENT is required for key-pair authentication")

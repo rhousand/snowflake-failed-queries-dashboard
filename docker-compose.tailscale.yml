@@ -1,21 +1,33 @@
 version: '3.8'
 
+# Docker secrets for sensitive credentials
+# Secrets are mounted at /run/secrets/<secret_name> in containers
+secrets:
+  ts_authkey:
+    file: ./secrets/ts_authkey.txt
+  snowflake_password:
+    file: ./secrets/snowflake_password.txt
+  snowflake_private_key_passphrase:
+    file: ./secrets/snowflake_private_key_passphrase.txt
+
 services:
   tailscale:
     image: tailscale/tailscale:latest
     container_name: snowflake-dashboard-tailscale
     hostname: snowflake-dashboard
     environment:
-      - TS_AUTHKEY=${TS_AUTHKEY}
+      # TS_AUTHKEY is read from Docker secret via script
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=true
       - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---advertise-tags=tag:snowflake-dashboard}
+    secrets:
+      - ts_authkey
     volumes:
       - tailscale-state:/var/lib/tailscale
     restart: unless-stopped
     networks:
       - tailscale-net
-    command: sh -c "tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock --tun=userspace-networking & sleep 5 && tailscale up --authkey=${TS_AUTHKEY} --hostname=snowflake-dashboard ${TS_EXTRA_ARGS:---advertise-tags=tag:snowflake-dashboard} --reset || tailscale up --accept-routes && sleep 2 && tailscale serve --bg --https=443 http://127.0.0.1:8080 && tail -f /dev/null"
+    command: sh -c "TS_AUTHKEY=$(cat /run/secrets/ts_authkey) && tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock --tun=userspace-networking & sleep 5 && tailscale up --authkey=$${TS_AUTHKEY} --hostname=snowflake-dashboard ${TS_EXTRA_ARGS:---advertise-tags=tag:snowflake-dashboard} --reset || tailscale up --accept-routes && sleep 2 && tailscale serve --bg --https=443 http://127.0.0.1:8080 && tail -f /dev/null"
     healthcheck:
       test: ["CMD", "tailscale", "status"]
       interval: 30s
@@ -31,20 +43,22 @@ services:
       - PORT=8080
       # Authentication (password or keypair)
       - SNOWFLAKE_AUTH_TYPE=${SNOWFLAKE_AUTH_TYPE:-password}
-      # Common config
+      # Common config (non-sensitive)
       - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
       - SNOWFLAKE_USER=${SNOWFLAKE_USER}
-      # Password auth
-      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
-      # Key-pair auth
+      # Key-pair auth (file path and content are non-sensitive paths/references)
       - SNOWFLAKE_PRIVATE_KEY_PATH=${SNOWFLAKE_PRIVATE_KEY_PATH}
       - SNOWFLAKE_PRIVATE_KEY_CONTENT=${SNOWFLAKE_PRIVATE_KEY_CONTENT}
-      - SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}
-      # Database config
+      # Database config (non-sensitive)
       - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE:-SNOWFLAKE}
       - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA:-ACCOUNT_USAGE}
       - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
       - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE:-ACCOUNTADMIN}
+    # Secrets for sensitive credentials (password and passphrase)
+    # Application reads from /run/secrets/snowflake_password and /run/secrets/snowflake_private_key_passphrase
+    secrets:
+      - snowflake_password
+      - snowflake_private_key_passphrase
     # Uncomment to mount private key file for key-pair auth
     volumes:
       - ./snowflake_key.p8:/run/secrets/snowflake_key.p8:ro
