@@ -10,7 +10,12 @@
 *.pem
 *.key
 keys/
-secrets/
+
+# Secrets (but keep README.md)
+secrets/*.txt
+secrets/*.p8
+secrets/*.pem
+secrets/*.key
 
 # Go build artifacts
 snowflake-dashboard
