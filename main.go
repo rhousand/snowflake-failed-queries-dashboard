@@ -286,6 +286,12 @@ func getSnowflakeConnection(config *Config) (*sql.DB, *rsa.PrivateKey, error) {
 		return nil, nil, fmt.Errorf("failed to ping snowflake: %w", err)
 	}
 
+	// Configure connection pool to prevent resource exhaustion and enable credential rotation
+	db.SetMaxOpenConns(10)                     // Limit concurrent connections to prevent database overload
+	db.SetMaxIdleConns(5)                      // Keep some connections ready for reuse
+	db.SetConnMaxLifetime(5 * time.Minute)     // Rotate connections (enables credential rotation)
+	db.SetConnMaxIdleTime(1 * time.Minute)     // Close idle connections after 1 minute
+
 	return db, privateKey, nil
 }
 
