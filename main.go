@@ -384,6 +384,16 @@ func securityHeaders(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// limitRequestSize middleware limits the size of incoming request bodies
+// to prevent memory exhaustion attacks from large payloads
+func limitRequestSize(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Limit request body to 1 MB
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next(w, r)
+	}
+}
+
 func getFailedQueries(db *sql.DB) ([]FailedQuery, error) {
 	query := `
 		SELECT
@@ -1000,7 +1010,7 @@ func main() {
 		log.Fatalf("Failed to parse template: %v", err)
 	}
 
-	http.HandleFunc("/", securityHeaders(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", securityHeaders(limitRequestSize(func(w http.ResponseWriter, r *http.Request) {
 		queries, err := getFailedQueries(db)
 		if err != nil {
 			// Security Fix #6: Return generic error to client, log details server-side
@@ -1030,9 +1040,9 @@ func main() {
 		if err := tmpl.Execute(w, data); err != nil {
 			log.Printf("Error executing template: %v", err)
 		}
-	}))
+	})))
 
-	http.HandleFunc("/api/queries", securityHeaders(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/queries", securityHeaders(limitRequestSize(func(w http.ResponseWriter, r *http.Request) {
 		queries, err := getFailedQueries(db)
 		if err != nil {
 			// Security Fix #6: Return generic error to client, log details server-side
@@ -1045,7 +1055,7 @@ func main() {
 		if err := json.NewEncoder(w).Encode(queries); err != nil {
 			log.Printf("Error encoding JSON: %v", err)
 		}
-	}))
+	})))
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -1056,7 +1066,18 @@ func main() {
 	log.Printf("Dashboard: http://localhost:%s", port)
 	log.Printf("API endpoint: http://localhost:%s/api/queries", port)
 
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	// Security Fix #7: Configure HTTP server with timeouts and limits
+	// to prevent resource exhaustion and slow HTTP attacks (slowloris)
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           nil,
+		ReadTimeout:       10 * time.Second,  // Maximum time to read request (prevents slowloris)
+		WriteTimeout:      10 * time.Second,  // Maximum time to write response
+		MaxHeaderBytes:    1 << 20,           // 1 MB max header size
+		IdleTimeout:       60 * time.Second,  // Keep-alive timeout
+		ReadHeaderTimeout: 5 * time.Second,   // Time to read request headers
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }
