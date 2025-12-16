@@ -145,11 +145,27 @@ func parsePrivateKey(config *Config) (*rsa.PrivateKey, error) {
 		}
 	}
 
+	// Security: Clear PEM bytes from memory after parsing
+	defer func() {
+		for i := range pemBytes {
+			pemBytes[i] = 0
+		}
+	}()
+
 	// Decode PEM block
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
 		return nil, errors.New("failed to parse PEM block containing the private key")
 	}
+
+	// Security: Clear PEM block bytes from memory after use
+	defer func() {
+		if block != nil && block.Bytes != nil {
+			for i := range block.Bytes {
+				block.Bytes[i] = 0
+			}
+		}
+	}()
 
 	// Handle encrypted vs unencrypted keys
 	var privateKeyBytes []byte
@@ -163,6 +179,12 @@ func parsePrivateKey(config *Config) (*rsa.PrivateKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt PEM block: %w", err)
 		}
+		// Security: Clear decrypted key bytes after parsing
+		defer func() {
+			for i := range privateKeyBytes {
+				privateKeyBytes[i] = 0
+			}
+		}()
 	} else if block.Type == "ENCRYPTED PRIVATE KEY" {
 		// Modern PKCS#8 encryption
 		if config.PrivateKeyPassphrase == "" {
@@ -183,6 +205,13 @@ func parsePrivateKey(config *Config) (*rsa.PrivateKey, error) {
 		privateKeyBytes = block.Bytes
 	}
 
+	// Security: Clear private key bytes after parsing
+	defer func() {
+		for i := range privateKeyBytes {
+			privateKeyBytes[i] = 0
+		}
+	}()
+
 	// Parse unencrypted PKCS#8 or PKCS#1
 	privateKey, err := x509.ParsePKCS8PrivateKey(privateKeyBytes)
 	if err != nil {
@@ -198,9 +227,10 @@ func parsePrivateKey(config *Config) (*rsa.PrivateKey, error) {
 	return rsaKey, nil
 }
 
-func getSnowflakeConnection(config *Config) (*sql.DB, error) {
+func getSnowflakeConnection(config *Config) (*sql.DB, *rsa.PrivateKey, error) {
 	var dsn string
 	var err error
+	var privateKey *rsa.PrivateKey
 
 	switch config.AuthType {
 	case AuthTypePassword:
@@ -218,9 +248,9 @@ func getSnowflakeConnection(config *Config) (*sql.DB, error) {
 
 	case AuthTypeKeyPair:
 		// Load and parse private key
-		privateKey, err := parsePrivateKey(config)
+		privateKey, err = parsePrivateKey(config)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load private key: %w", err)
+			return nil, nil, fmt.Errorf("failed to load private key: %w", err)
 		}
 
 		// Build config using gosnowflake.Config
@@ -237,26 +267,26 @@ func getSnowflakeConnection(config *Config) (*sql.DB, error) {
 
 		dsn, err = gosnowflake.DSN(sfConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to build DSN for key-pair auth: %w", err)
+			return nil, nil, fmt.Errorf("failed to build DSN for key-pair auth: %w", err)
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported auth type: %s", config.AuthType)
+		return nil, nil, fmt.Errorf("unsupported auth type: %s", config.AuthType)
 	}
 
 	db, err := sql.Open("snowflake", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open snowflake connection: %w", err)
+		return nil, nil, fmt.Errorf("failed to open snowflake connection: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ping snowflake: %w", err)
+		return nil, nil, fmt.Errorf("failed to ping snowflake: %w", err)
 	}
 
-	return db, nil
+	return db, privateKey, nil
 }
 
 // Security Fix #3: Clear sensitive data from memory
@@ -277,6 +307,54 @@ func clearSensitiveData(config *Config) {
 			passphraseBytes[i] = 0
 		}
 		config.PrivateKeyPassphrase = ""
+	}
+}
+
+// clearPrivateKey zeroes out RSA private key material from memory
+// This prevents the private key from being extracted via memory dumps after it's no longer needed
+func clearPrivateKey(key *rsa.PrivateKey) {
+	if key == nil {
+		return
+	}
+
+	// Zero out the private exponent (D) - the most sensitive part of the private key
+	if key.D != nil {
+		key.D.SetInt64(0)
+	}
+
+	// Clear the prime factors - these can be used to reconstruct the private key
+	if key.Primes != nil {
+		for i := range key.Primes {
+			if key.Primes[i] != nil {
+				key.Primes[i].SetInt64(0)
+			}
+		}
+		key.Primes = nil
+	}
+
+	// Clear precomputed values used for CRT optimization
+	if key.Precomputed.Dp != nil {
+		key.Precomputed.Dp.SetInt64(0)
+	}
+	if key.Precomputed.Dq != nil {
+		key.Precomputed.Dq.SetInt64(0)
+	}
+	if key.Precomputed.Qinv != nil {
+		key.Precomputed.Qinv.SetInt64(0)
+	}
+	if key.Precomputed.CRTValues != nil {
+		for i := range key.Precomputed.CRTValues {
+			if key.Precomputed.CRTValues[i].Exp != nil {
+				key.Precomputed.CRTValues[i].Exp.SetInt64(0)
+			}
+			if key.Precomputed.CRTValues[i].Coeff != nil {
+				key.Precomputed.CRTValues[i].Coeff.SetInt64(0)
+			}
+			if key.Precomputed.CRTValues[i].R != nil {
+				key.Precomputed.CRTValues[i].R.SetInt64(0)
+			}
+		}
+		key.Precomputed.CRTValues = nil
 	}
 }
 
@@ -899,7 +977,7 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	db, err := getSnowflakeConnection(config)
+	db, privateKey, err := getSnowflakeConnection(config)
 	if err != nil {
 		log.Fatalf("Failed to connect to Snowflake: %v", err)
 	}
@@ -907,6 +985,12 @@ func main() {
 
 	// Security Fix #3: Clear sensitive data from memory after successful connection
 	clearSensitiveData(config)
+
+	// Clear private key material from memory after connection is established
+	// The key is no longer needed since the DB connection has been authenticated
+	if privateKey != nil {
+		clearPrivateKey(privateKey)
+	}
 
 	// Security Fix #4: Go's html/template automatically escapes all interpolated values
 	// to prevent XSS attacks. This includes QueryText, ErrorMessage, UserName, etc.
